@@ -19,7 +19,8 @@
     "postinstall": "electron-builder install-app-deps",
     "prebuild:check": "node scripts/prebuild-check.js",
     "build:unpack": "npm run build && electron-builder --dir",
-    "build:win": "npm run build && electron-builder --win --x64",
+    "build:win": "npm run build && electron-builder --win nsis --x64",
+    "build:win:portable": "npm run build && electron-builder --win portable --x64",
     "build:win32": "npm run build && electron-builder --win --ia32",
     "build:mac": "npm run build && electron-builder --mac",
     "build:mac-arm": "npm run build && electron-builder --mac --arm64",
@@ -95,6 +96,11 @@
       "output": "dist",
       "buildResources": "build"
     },
+    "compression": "maximum",
+    "electronLanguages": [
+      "en-US",
+      "zh-CN"
+    ],
     "files": [
       "out/**/*",
       "package.json",
@@ -102,11 +108,8 @@
     ],
     "extraResources": [
       {
-        "from": "build",
-        "to": "build",
-        "filter": [
-          "**/*"
-        ]
+        "from": "build/icon.png",
+        "to": "build/icon.png"
       },
       {
         "from": "sha3_wasm_bg.7b9ca65ddd.wasm",
@@ -167,12 +170,6 @@
       "target": [
         {
           "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "portable",
           "arch": [
             "x64"
           ]
