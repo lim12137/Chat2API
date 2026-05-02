@@ -5,6 +5,23 @@ on:
     tags:
       - 'v*.*.*'
       - 'v*.*.*-*'
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Build target platform'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - macos
+          - windows
+          - linux
+      publish:
+        description: 'Publish to GitHub Release'
+        required: true
+        default: false
+        type: boolean
 
 jobs:
   release:
@@ -18,14 +35,20 @@ jobs:
         include:
           - os: macos-latest
             arch: arm64
+            platform: macos
           - os: macos-latest
             arch: x64
+            platform: macos
           - os: windows-latest
             arch: x64
+            platform: windows
           - os: ubuntu-latest
             arch: x64
+            platform: linux
           - os: ubuntu-latest
             arch: arm64
+            platform: linux
+    if: ${{ github.event_name == 'push' || github.event.inputs.platform == 'all' || github.event.inputs.platform == matrix.platform }}
 
     steps:
       - name: Checkout repository
@@ -42,25 +65,62 @@ jobs:
         env:
           ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
 
+      - name: Run tests
+        shell: bash
+        run: |
+          if node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts.test) ? 0 : 1)"; then
+            npm test
+          else
+            echo "No test script found in package.json, fallback to build-only validation."
+          fi
+
       - name: Build application
         run: npm run build
 
-      - name: Build and Publish (macOS)
+      - name: Run check
+        run: npm run prebuild:check
+
+      - name: Build binary (macOS)
         if: matrix.os == 'macos-latest'
+        run: npx electron-builder --mac --${{ matrix.arch }} --publish=never
+        env:
+          ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
+
+      - name: Build binary (Windows)
+        if: matrix.os == 'windows-latest'
+        run: npx electron-builder --win --${{ matrix.arch }} --publish=never
+        env:
+          ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
+
+      - name: Build binary (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: npx electron-builder --linux --${{ matrix.arch }} --publish=never
+        env:
+          ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat2api-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/**
+          if-no-files-found: error
+
+      - name: Publish to GitHub Release (macOS)
+        if: (github.event_name == 'push') || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true' && matrix.os == 'macos-latest')
         run: npx electron-builder --mac --${{ matrix.arch }} --publish=always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
 
-      - name: Build and Publish (Windows)
-        if: matrix.os == 'windows-latest'
+      - name: Publish to GitHub Release (Windows)
+        if: (github.event_name == 'push') || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true' && matrix.os == 'windows-latest')
         run: npx electron-builder --win --${{ matrix.arch }} --publish=always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
 
-      - name: Build and Publish (Linux)
-        if: matrix.os == 'ubuntu-latest'
+      - name: Publish to GitHub Release (Linux)
+        if: (github.event_name == 'push') || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true' && matrix.os == 'ubuntu-latest')
         run: npx electron-builder --linux --${{ matrix.arch }} --publish=always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
