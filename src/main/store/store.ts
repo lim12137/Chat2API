@@ -11,6 +11,7 @@ import {
   StoreSchema,
   AppConfig,
   Account,
+  AccountStatus,
   Provider,
   LogEntry,
   DEFAULT_CONFIG,
@@ -103,6 +104,7 @@ class StoreManager {
       })
 
       await this.initializeRequestLogManager(storagePath)
+      this.normalizeLegacyAccountStatuses()
       await this.initializeDefaultProviders()
       this.isInitialized = true
       this.initializationError = null
@@ -120,6 +122,7 @@ class StoreManager {
           encryptionKey: this.getEncryptionKey(),
         })
         await this.initializeRequestLogManager(storagePath)
+        this.normalizeLegacyAccountStatuses()
         this.isInitialized = true
         this.initializationError = null
         console.log('[Store] Successfully recovered from corrupted data')
@@ -220,6 +223,81 @@ class StoreManager {
         config.requestLogConfig || DEFAULT_REQUEST_LOG_CONFIG,
       ),
     }
+  }
+
+  /**
+   * Normalize legacy account statuses from older data files.
+   * Some old values (for example: "valid") are not recognized by
+   * current availability checks that only accept "active".
+   */
+  private normalizeLegacyAccountStatuses(): void {
+    const accounts = (this.store?.get('accounts') as Account[]) || []
+    if (accounts.length === 0) {
+      return
+    }
+
+    const now = Date.now()
+    let changedCount = 0
+    const normalizedAccounts = accounts.map((account: Account) => {
+      const normalizedStatus = this.normalizeAccountStatus(
+        (account as unknown as { status?: unknown }).status,
+        account.errorMessage
+      )
+
+      if (account.status === normalizedStatus) {
+        return account
+      }
+
+      changedCount += 1
+      return {
+        ...account,
+        status: normalizedStatus,
+        updatedAt: now,
+      }
+    })
+
+    if (changedCount > 0) {
+      this.store?.set('accounts', normalizedAccounts)
+      console.log(`[Store] Normalized ${changedCount} legacy account status value(s)`)
+    }
+  }
+
+  private normalizeAccountStatus(status: unknown, errorMessage?: string): AccountStatus {
+    if (status === 'active' || status === 'inactive' || status === 'expired' || status === 'error') {
+      return status
+    }
+
+    if (typeof status === 'string') {
+      const normalized = status.trim().toLowerCase()
+
+      if (
+        normalized === 'valid' ||
+        normalized === 'enabled' ||
+        normalized === 'online' ||
+        normalized === 'ok' ||
+        normalized === 'success' ||
+        normalized === 'available'
+      ) {
+        return 'active'
+      }
+
+      if (
+        normalized === 'invalid' ||
+        normalized === 'disabled' ||
+        normalized === 'offline' ||
+        normalized === 'failed' ||
+        normalized === 'unauthorized'
+      ) {
+        return 'error'
+      }
+    }
+
+    if (errorMessage && errorMessage.trim().length > 0) {
+      return 'error'
+    }
+
+    // Keep historical accounts usable by default if status field is missing.
+    return 'active'
   }
 
   /**
