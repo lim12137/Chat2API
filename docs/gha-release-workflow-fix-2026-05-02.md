@@ -76,3 +76,34 @@ gh workflow run release.yml -f platform=linux -f publish=false
 结论：
 - 本地 workflow 已修复并可通过本地构建链路验证；
 - 远端 run 验证需在后续 push 后进行（本任务要求不推送，故到此为止）。
+
+---
+
+## 5) 补充调查（远端 run 25251909652）
+
+用户补充的远端失败信息：
+- run: `25251909652`
+- 失败 job: `prepare-matrix`
+- 错误：
+  - `Invalid format '        {"os":"ubuntu-latest","arch":"x64","platform":"linux"},'`
+  - `Unable to process file command 'output' successfully.`
+
+根因：
+- `prepare-matrix` 里将**多行 JSON**直接写入：
+  - `echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"`
+- `$GITHUB_OUTPUT` 的 `name=value` 语法要求 value 为单行（或使用 heredoc 多行格式），当前写法导致 output 文件命令解析失败。
+
+二次修复：
+- 将所有 `MATRIX='{"include":[...]}'` 改为**单行 JSON**，继续使用：
+  - `echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"`
+- 避免多行内容写入 `$GITHUB_OUTPUT` 导致的格式错误。
+
+二次本地验证命令：
+```powershell
+npm run prebuild:check
+npm run build
+```
+结果摘要：
+- 两条命令均通过；
+- `release.yml` 本地已更新为单行 matrix 输出；
+- `gh workflow view ... --yaml` 读取的是远端版本，不代表本地未提交版本。
