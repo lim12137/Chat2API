@@ -8,8 +8,9 @@
 
 import axios, { AxiosResponse } from 'axios'
 import { getDeepSeekHash } from '../../lib/challenge'
-import { Account, Provider } from '../store/types'
-import { storeManager } from '../store/store'
+import type { Account, Provider } from '../../store/types'
+import { resolveDeepSeekChatOptions } from './providerModelOptions'
+import { getProviderToolProfile } from '../toolCalling/providerProfiles'
 
 const DEEPSEEK_API_BASE = 'https://chat.deepseek.com/api'
 
@@ -285,24 +286,24 @@ export class DeepSeekAdapter {
   }
 
   private messagesToPrompt(messages: DeepSeekMessage[], isMultiTurn: boolean = false): string {
+    const toolProfile = getProviderToolProfile('deepseek')
     const processedMessages = messages.map(message => {
       let text: string
 
       // Handle tool calls in assistant message
       if (message.role === 'assistant' && message.tool_calls && message.tool_calls.length > 0) {
-        const toolCallsText = message.tool_calls.map(tc => {
-          return `<tool_calling>
-<name>${tc.function.name}</name>
-<arguments>${tc.function.arguments}</arguments>
-</tool_calling>`
-        }).join('\n')
-        text = toolCallsText
+        text = toolProfile.formatAssistantToolCalls(message.tool_calls.map(tc => ({
+          id: tc.id,
+          name: tc.function.name,
+          arguments: tc.function.arguments,
+        })))
       }
       // Handle tool response message
       else if (message.role === 'tool' && message.tool_call_id) {
-        text = `<tool_response tool_call_id="${message.tool_call_id}">
-${message.content || ''}
-</tool_response>`
+        text = toolProfile.formatToolResult({
+          toolCallId: message.tool_call_id,
+          content: String(message.content || ''),
+        })
       }
       else if (Array.isArray(message.content)) {
         const texts = message.content
@@ -385,50 +386,27 @@ ${message.content || ''}
 
     let prompt = this.messagesToPrompt(messages, false)
 
-    // Use request parameters for mode control (OpenAI compatible)
-    let searchEnabled = false
-    let thinkingEnabled = false
-    let modelType = 'default'
+    const { modelType, searchEnabled, thinkingEnabled } = resolveDeepSeekChatOptions(request, prompt)
 
-    if (request.web_search) {
-      searchEnabled = true
+    if (request.web_search || request.model.toLowerCase().includes('search')) {
       console.log('[DeepSeek] Web search enabled')
     }
 
-    if (request.reasoning_effort) {
-      thinkingEnabled = true
+    if (request.reasoning_effort || thinkingEnabled) {
       console.log('[DeepSeek] Reasoning mode enabled, effort:', request.reasoning_effort)
-    }
-
-    // Fallback: check model name for backward compatibility
-    const modelLower = request.model.toLowerCase()
-
-    if (modelLower.includes('expert')) {
-      modelType = 'expert'
-    }
-    if (!searchEnabled && modelLower.includes('search')) {
-      searchEnabled = true
-      console.log('[DeepSeek] Web search enabled (from model name)')
-    }
-    if (!thinkingEnabled && (modelLower.includes('r1') || modelLower.includes('think'))) {
-      thinkingEnabled = true
-      console.log('[DeepSeek] Reasoning mode enabled (from model name)')
-    }
-    // Also check prompt for deep thinking keyword
-    if (!thinkingEnabled && prompt.includes('deep thinking')) {
-      thinkingEnabled = true
-      console.log('[DeepSeek] Reasoning mode enabled (from prompt)')
     }
 
     const response = await axios.post(
       `${DEEPSEEK_API_BASE}/v0/chat/completion`,
       {
         chat_session_id: sessionId,
+        parent_message_id: null,
         prompt,
+        model_type: modelType,
         ref_file_ids: [],
         search_enabled: searchEnabled,
         thinking_enabled: thinkingEnabled,
-        model_type: modelType,
+        preempt: false,
       },
       {
         headers: {
